@@ -1,0 +1,60 @@
+/*
+	Standard definition for a helper agent.
+*/
+
+Include: npc.2apl
+	
+Beliefs: 
+	/*
+		can( Goal )
+		
+		Description: Define the ability of this type of agent to achieve certain goals.
+	*/
+	can( calm(victim) ).
+	can( stabilize(victim) ).
+	can( hint(HINT) ).
+		
+	/*
+		achieve( Goal, Goal2, BelievabilityScore (higher = more believable and subsequently, gives a higher chance of getting selected in auctions) )
+		followed by achieve( Goal2, Requirement, BelievabilityScore )
+		
+		Description: Define how the agents can achieve said goals.
+	*/
+	achieve(calm(victim), calm_victim, 30).
+		achieve(calm_victim, role(victim), 20).
+	
+	achieve(stabilize(victim), apply_splint, 40).
+		achieve(apply_splint, role(victim), 20).
+	
+	achieve(hint(HINT), talking, 20).
+		achieve(talking, character(trainee), 20).
+
+PG-rules:
+	/*
+		actualize( plan( Goal2, Requirement ), Goal,  ) <- required knowledge
+		
+		Description: Define what the agent has to do to actualize a plan when said agent wins the auction.
+		Note: role knowledge role(CHAR, ROLE) will be automatically resolved by a function requesting knowledge of said role if it is not known.
+	*/
+	actualize(plan(calm_victim, role(ROLE)), calm(ROLE)) <- role(CHAR, ROLE) |
+	{[
+		B(VARLIST = [CHAR]);
+		@env( storyMessage( 'is trying to calm %t', VARLIST ), _ );
+		send( CHAR, request, mental_state(calm) );		
+		dropgoal( actualize(plan(calm_victim, role(ROLE)), calm(ROLE)) )
+	]}
+	
+	actualize(plan(apply_splint, role(ROLE)), stabilize(ROLE)) <- role(CHAR, ROLE) |
+	{[
+		B(VARLIST = [ROLE, CHAR]);
+		@env( storyMessage( 'is trying to stabilize %t %t', VARLIST ), _ );
+		send( CHAR, request, cure(broken_limb) );
+		dropgoal( actualize(plan(apply_splint, role(ROLE)), stabilize(ROLE)) )
+	]}
+	
+	actualize(plan(talking, character(trainee)), hint(HINT)) <- true |
+	{[
+		B(VARLIST = [HINT]);
+		@env( storyMessage( 'says: %t', VARLIST ), _ );
+		dropgoal( actualize(plan(talking, character(trainee)), hint(HINT)) )
+	]}

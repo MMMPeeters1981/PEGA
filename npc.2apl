@@ -1,0 +1,191 @@
+/*
+	Standard definition for a non playable character agent.
+*/
+
+Include: character.2apl	
+
+BeliefUpdates:
+	/* MentalState(NEW) updates the mental state by overriding the current mental state with a new one */
+	{ can_update(mental_state) and mental_state(OLD) }				MentalState(NEW)			{ not mental_state(OLD), mental_state(NEW) }
+	
+	/* AddPhysicalState(STATE) adds a new physical state and removes the stable state if present */
+	{ can_update(physical_state) and physical_state(stable) }		AddPhysicalState(STATE)		{ not physical_state(stable), physical_state(STATE) }
+	{ can_update(physical_state) and not physical_state(STATE) }	AddPhysicalState(STATE)		{ physical_state(STATE) }
+	
+	/* RemovePhysicalState(STATE) removes a current physical state */
+	{ physical_state(STATE) }										PhysicalState(NEW)			{ not physical_state(STATE), physical_state(NEW)}
+	
+	/* DeleteBelief beliefUpdates for resetting a NPC */	
+	{ mental_state(X1) and physical_state(X2) }						ResetStates()				{ not mental_state(X1), not physical_state(X2), mental_state(calm), physical_state(stable) }
+	
+Beliefs:
+	/* Initial states */
+	mental_state(calm).
+	physical_state(stable).
+
+
+	/*
+		branch_plan( [ goal_score( Goal, BelievabilityScore ) ], [ ResultingPlanList ] )
+		
+		Description: Recursive function which makes a list of the achieve( Goal2, Requirement, _ ) based on the achieve( Goal, Goal2, _ ) and saves it in the ResultingPlanList. 
+	*/
+	branch_plan([], []).
+	branch_plan([ goal_score(Goal, IncScore) | GoalList ], [ PlanList2 | ResultingPlanList ]) :-
+		bagof( plan_score( plan(Goal, Requirement), Score ), can_achieve(Goal, Requirement, Score), PlanList1),
+		inc_score(PlanList1, IncScore, PlanList2),
+		branch_plan(GoalList, ResultingPlanList).
+	
+	
+	/*
+		inc_score( [ plan_score(Plan, Score) ], ScoreIncrement, [ ResultingPlanList ] )
+		
+		Description: Recursive function which increases every Score in the first list with the ScoreIncrement and saves it in the ResultingPlanList.
+	*/
+	inc_score([], _, []).
+	inc_score([ plan_score(Plan, Score) | PlanList ], IncScore, [ plan_score(Plan, NewScore) | IncreasedPlanList ]) :-
+		is(NewScore, Score + IncScore),
+		inc_score(PlanList, IncScore, IncreasedPlanList).
+	
+	
+	/*
+		total_score([ plan_score(_, Score) ], TotalScore)
+		
+		Description: Recursive function which sums up every Score in the list and saves it in the TotalScore.
+	*/
+	total_score([], 0).
+	total_score([ plan_score(_, Score) | PlanList ], TotalScore) :-
+		total_score(PlanList, ScoreSum),
+		TotalScore = Score + ScoreSum.	
+	
+	
+	/*
+		pick_plan( [ plan_score(Plan, Score) ], Random, FinalPlan, FinalScore )
+			Random: value between 0 and the sum of all scores.
+		
+		Description: Recursive function which stochastically picks a plan (plan_score, saved in FinalPlan) based on the Random value.
+		Algorithm: If Score>Random, pick the plan, else Random=Random-Score and go to the next plan.
+	*/
+	pick_plan([], _, _, _, _).
+	pick_plan([plan_score(Plan, Score)|PlanList], Random, FinalPlan, FinalScore) :-
+	(
+		Score > Random ->
+		FinalPlan = Plan,
+		is(FinalScore, Score)
+	;
+		is(Random1, Random - Score),
+		pick_plan(PlanList, Random1, FinalPlan, FinalScore)
+	).
+
+
+	/*
+		plan(Goal, FinalPlan, FinalScore)
+		
+		Description: Function which stochastically picks a way for an agent to perform Goal.
+	*/
+	plan(Goal, FinalPlan, FinalScore) :-
+		can(Goal),
+		bagof(goal_score(Goal1, Score), achieve(Goal, Goal1, Score), GoalList),
+		branch_plan(GoalList, [PlanList]),
+		total_score(PlanList, TotalScore),
+		is(Random, int(random(TotalScore))),
+		pick_plan(PlanList, Random, FinalPlan, FinalScore).
+
+PG-rules:
+	/*
+		If a character wishes to actualize a plan with a Role, but doesn't know this Role, request the Role.
+	*/
+	
+	actualize(plan(_, role(ROLE)), _) <- not role(_, ROLE) |
+	{[
+		send( director, request, character_role(ROLE) )
+	]}
+
+PC-rules:
+	/*
+		message( CHAR, request, _, _, STATE ) <- required state
+		
+		Description: Characters can request state changes from other characters via these messages.
+	*/
+	message( CHAR, request, _, _, mental_state(STATE) ) <- not mental_state(STATE) |
+	{[
+		MentalState(STATE);
+		B(VARLIST = [STATE]); /* [Workaround] passing [STATE] directly to storyMessage just passes as an empty list. */
+		@env( storyMessage( 'is now %t', VARLIST ), _ );		
+
+		// Inform the director that the mental state is stable
+		send(director, inform, stable(mental_state))
+
+		
+	]}
+	
+	message( CHAR, request, _, _, mental_state(STATE) ) <- mental_state(STATE) |
+	{[
+		B(VARLIST = [STATE]); /* [Workaround] passing [STATE] directly to storyMessage just passes as an empty list. */
+		@env( storyMessage( 'was already %t', VARLIST ), _ )
+	]}
+		
+	message( CHAR, request, _, _, cure(STATE) ) <- physical_state(STATE) and not mental_state(calm) |
+	{[		
+		B(VARLIST = [STATE]); /* [Workaround] passing [STATE] directly to storyMessage just passes as an empty list. */
+		@env( storyMessage( 'is in panic, you cannot apply this action!', VARLIST ), _ )
+	]}
+	
+	
+	message( CHAR, request, _, _, cure(STATE) ) <- physical_state(STATE) |
+	{[
+		PhysicalState(stable);
+		B(VARLIST = [STATE]); /* [Workaround] passing [STATE] directly to storyMessage just passes as an empty list. */
+		@env( storyMessage( 'no longer has %t', VARLIST ), _ );
+		
+		// Inform the director that the physical state is stable
+		send(director, inform, stable(physical_state))		
+	]}
+	
+	
+	message( CHAR, request, _, _, cure(STATE) ) <- not physical_state(STATE) |
+	{[
+		B(VARLIST = [STATE]); /* [Workaround] passing [STATE] directly to storyMessage just passes as an empty list. */
+		@env( storyMessage( 'does not have %t', VARLIST ), _ )
+	]}
+	
+	
+	/*
+		When an action is not possible, this standard message is displayed
+	*/
+	message( CHAR, request, _, _, _ ) <- true |
+	{[
+		@env( storyMessage( 'says: "This action did not have any effect"', [] ), _ )
+	]}
+			
+	/*
+		If the director informs the character about an auction, the character tries to make a plan for said auction, if no plan can be made, the character lets the director know. 
+	*/
+	message( director, inform, _, _, auction(Goal) ) <- true |
+	{
+		if B( plan(Goal, Plan, Score) ) then
+		{
+			send( director, propose, bid(Goal, Plan, Score) )
+		}
+		else
+		{
+			send( director, inform, bid(Goal, no) )
+		}
+	}
+
+	/*
+		If the director proposes the character to actualize a Plan, the character does so.
+	*/
+	message( director, propose, _, _, actualize(Plan, Goal) ) <- not actualize(Plan, Goal) |
+	{
+		adopta( actualize(Plan, Goal) )
+	}
+
+	/*
+		Resetting the beliefs about the scenario, to start with a new scenario
+	*/
+	message( director, inform, _, _, reset(beliefs) ) <- true |
+	{[
+		reset(beliefs);
+		ResetStates();
+		ResetCharacter()		
+	]}

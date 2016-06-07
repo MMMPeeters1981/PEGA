@@ -1,0 +1,5 @@
+
+	<environment name="environment" file="MADStext.jar">
+		<parameter key="gridWidth" value="18"/>
+		<parameter key="gridHeight" value="18"/>
+	</environment>

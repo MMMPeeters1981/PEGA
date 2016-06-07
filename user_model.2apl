@@ -1,0 +1,326 @@
+/*	 
+	User model implementation - off-line part. especially concerned with initialisation and evaluation of the scenario
+	
+		Functionalities for updating the competences, considering competence progress
+		Functionalities for selecting a new learning focus		
+		Functionality for determining the initial level of scaffolding
+		Functionalities for keeping track of the trainee's motivation
+		
+		Contains the "processing" and "reasoning" steps of the personalization cycle
+*/	
+
+BeliefUpdates:
+	/*	Register and maintain the learning focus and Level of Scaffolding	*/
+	{ learningFocus(Old, TimesTrained) and
+		learningFocusAverage(Old, Score) }				UpdateLearningFocus(New)					{ not learningFocus(Old, TimesTrained), learningFocus(New, 0), not learningFocusAverage(Old, Score) }
+	{ }													UpdateLearningFocus(New)					{ learningFocus(New, 0) }
+			
+	{ currentLoS(Old) }									UpdateLoS(New)								{ not currentLoS(Old), currentLoS(New) }
+	{ }													UpdateLoS(New)								{ currentLoS(New) }
+		
+	{ competence( Name, Score1, Parent, SkillList ) }	UpdateCompetence(Name, Score1, Score2)		{ not competence( Name, Score1, Parent, SkillList ), competence( Name, Score2, Parent, SkillList ) }
+	
+	/*	Update counter to keep an eye on the amount of times a competence was trained	*/
+	{ learningFocus(Name, Number) }						IncreaseCounter(Name) 						{ not learningFocus(Name, Number), learningFocus(Name, Number + 1) }
+	
+	/*	Keep track of the average score of the current learning focus	*/
+	{ learningFocusAverage(Name, OldScore) }			UpdateLearningFocusAverage(Name, Score)		{ not learningFocusAverage(Name, OldScore), learningFocusAverage(Name, (Score + OldScore) / 2) }
+	{ }													UpdateLearningFocusAverage(NewName, Score)	{ learningFocusAverage(NewName, Score) }
+	
+	/*	Keeping track of the trainee's motivation	*/
+	{ motivation(Old) } 								UpdateMotivation(New)						{ not motivation(Old), motivation((New + Old) / 2) }
+	{ } 												UpdateMotivation(New)						{ motivation(New) }
+	
+	{ motivationLevel(Old) }							ChangeMotivation(Motivation)				{ not motivationLevel(Old), motivationLevel(Motivation) }	
+	{ }													ChangeMotivation(Motivation)				{ motivationLevel(Motivation) }
+
+Beliefs:
+	
+	/*	Competence tree data structure: Node: competence(Name, Score, Parent, [ Children* ])	*/		
+	competence(sociale_vaardigheden, 8.75, root, [verantwoordelijkheid_nemen, communiceren, plannen_en_organiseren, samenwerken, assertiviteit]).	
+		competence( verantwoordelijkheid_nemen, 0, sociale_vaardigheden, [ gerust_stellen, betrokkenheid, delegeren] ).
+			competence( gerust_stellen, 0, verantwoordelijkheid_nemen, [] ).
+			competence( betrokkenheid, 0, verantwoordelijkheid_nemen, [] ).
+			competence( delegeren, 0, verantwoordelijkheid_nemen, [] ).
+		competence( communiceren, 70, sociale_vaardigheden, [ uitvragen, rapporteren ] ).
+			competence( uitvragen, 90, communiceren, [] ).
+			competence( rapporteren, 80, communiceren, [ abc_rapportage ] ).
+				competence( abc_rapportage, 80, rapporteren, [] ).		
+		competence( plannen_en_organiseren, 0, sociale_vaardigheden, [] ).
+		competence( samenwerken, 0, sociale_vaardigheden, [] ).
+		competence( assertiviteit, 0, sociale_vaardigheden, [] ).
+	
+
+Goals:
+	observe(motivation)
+	
+PG-rules:
+
+	/*	Keep track of the trainee's motivation, if too low, take appropriate actions	*/
+	observe(motivation) <- motivation(M) and M < 5 and not motivationLevel(low) |
+	{
+		ChangeMotivation(low)
+	}
+	
+	observe(motivation) <- motivation(M) and M >= 5 and not motivationLevel(high) |
+	{
+		ChangeMotivation(high)
+	}
+		
+PC-rules:
+
+	/*	Initial message from the director to initiate scenario	*/
+	message( director, request, _, _, request(userModelData) ) <- true |
+	{
+		determineLearningFocus();
+		B( learningFocus(Focus, Number) );
+		
+		B( competence( Focus, CurrentScore, Parent, SkillList ) );
+		determineLoS(competence(Focus, CurrentScore));
+		B( currentLoS(LoS) );
+		
+		// Send the learning focus and level of scaffolding back to the director		
+		send( director, inform, userData( learningFocus(Focus), scaffolding(LoS) ) )
+	}
+
+	/*	Scenario results from scenario are send from the directer, determine parameters to pick new scenario	*/
+	message( director, inform, _, _, update(competence(Name, Score), motivation(Motivation) ) ) <- true |
+	{	
+		// Update the current motivation
+		UpdateMotivation(Motivation);
+		
+		// Increase Times-Learned-Competence counter
+		IncreaseCounter(Name);
+		
+		// Update the average score of the current learning focus
+		UpdateLearningFocusAverage(Name, Score);
+		
+		initiateNewScenario(Name)
+	}
+	
+	
+	
+	/* 	Determine learning focus and Level of Scaffolding
+		If the previous learning focus is not yet trained enough (time trained < 5 and average score < 80) and the trainee is still motivated, keep the same focus	
+	*/	
+	initiateNewScenario(Focus) <- learningFocus(Focus, Counter) and learningFocusAverage(Focus, Score) and ((Counter < 5 and Score < 80 and motivationLevel(high)) or (Counter < 3 ) ) |
+	{
+		// Keep the same focus, determine a new LoS
+		determineLoS(competence(Focus, Score));
+		B( currentLoS(LoS) );
+		
+		send( director, inform, userData( learningFocus(Focus), scaffolding(LoS) ) )
+	}
+	
+	/*	Determine learning focus and Level of Scaffolding
+		If the previous learning focus is trained well enough, or for at most 5 times, 
+		determine a new learning focus and accompanying level of scaffolding			
+	*/		
+	initiateNewScenario(OldFocus) <- learningFocus(OldFocus, Counter) and learningFocusAverage(OldFocus, Score) and ((Counter >= 3 and (motivationLevel(low) or Score >= 80)) or (Counter > 4)) |
+	{
+		// Update the competence tree with the new score
+		updateTree(competence(OldFocus, Score));
+	
+		determineLearningFocus();
+		B( learningFocus(Focus, Number) );
+		
+		B( competence( Focus, CurrentScore, Parent, SkillList ) );
+		determineLoS(competence(Focus, CurrentScore));
+		B( currentLoS(LoS) );
+		
+		// Send the learning focus and level of scaffolding back to the director		
+		send( director, inform, userData( learningFocus(Focus), scaffolding(LoS) ) )
+	}
+	
+	
+
+/*	Determine initial Level of Scaffolding
+		Procedural approach to determine the level of scaffolding when a learning focus has been chosen 
+*/
+	determineLoS(competence(Name, CurrentScore)) <- true |
+	{
+		if B(CurrentScore < 25 ) then {
+			UpdateLoS(3)
+		}
+		else if B(CurrentScore < 50 ) then {
+			UpdateLoS(2)
+		} 
+		else if B(CurrentScore < 75 ) then {
+			UpdateLoS(1)
+		} 
+		else if B(CurrentScore =< 100 ) then {
+			UpdateLoS(0)
+		}
+	}
+
+
+	
+	/* Updating competence tree
+		
+		Update the recently trained learning focus, and every competence above, and when necessary below
+		Invariant: When each child of a competence node ranges between 80-100, the competence node itself will be 50%				
+	*/
+
+	/*	The competence that should be updated is a LEAF	*/
+	updateTree( competence(Name, Progress) ) <- competence(Name, OldScore, Parent, []) |
+	{
+		// Overwrite previous score
+		UpdateCompetence(Name, OldScore, Progress);
+				
+		// Update competence score of parent
+		updateParent(Parent, OldScore, Progress)
+	}	
+
+	/* 	The competence that is updated is a NODE
+			Score >= 50: Competence was trained well enough; general tree score increases
+			Score < 50: Competence score is embarrassing, general tree score decreases 
+	*/
+	updateTree( competence(Name, Progress) ) <- competence(Name, Current, Parent, SubSkills) |
+	{
+		if B( Progress >= 50 ) then 
+		{	
+			//	Overwrite previous score
+			UpdateCompetence(Name, Current, Progress);
+			
+			// Recalculate the parent scores
+			updateParent(Parent, Current, Progress)
+		}
+		else if B( Progress < 50 ) then 
+		{
+			// Reset own competence score to 50
+			UpdateCompetence(Name, Current, 50);
+			
+			// Update parents according to the new score
+			updateParent(Parent, Current, 50);
+			
+			// Determine penalty due to the low score
+			B( is( Penalty, 50 - Progress ) );
+			
+			// Recalculate the scores of the children. The new competence score is determined automatically
+			updateChildren(SubSkills, Penalty)
+		}
+	}
+
+	/*	Reduce the score of each child with the penalty that was given	*/
+	updateChildren( [X|REST], Penalty ) <- competence(X, Current, Parent, SubSkills) |
+	{
+		// Reduce the current score, with the penalty
+		B( is( ReducedScore, Current - Penalty ) );
+		
+		// Recalculate the scores in the tree according to the new value
+		updateTree( competence(X, ReducedScore) );
+				
+		// Recursively continue updating the rest of the list of children, as long as the list is not empty
+		if B( not (REST = []) ) then {
+			updateChildren(REST, Penalty)
+		}
+	}
+
+	/*	Update the parent of the current node or leaf	*/	
+	updateParent( ParentName, ChildOldScore, ChildProgress ) <- competence(ParentName, ParentOldScore, GrandParent, SubSkills) |
+	{	
+		// Calculate the new competence score of the parent
+		B( 		
+			// Adjust the incoming child score, necessary for the mapping of scores ranging between 80-100 to score 100
+			is(AdjustedChildOldScore, (min(100, (5 * (ChildOldScore / 4))))) and 
+			is(AdjustedChildProgress, (min(100, (5 * (ChildProgress / 4))))) and	
+
+			// Calculating the new parent score by replacing the old childscore with the new childscore			
+			length(SubSkills, Length) and
+			is(Minus, ( 0.5 * (AdjustedChildOldScore / Length) )) and
+			is(Plus, ( 0.5 * (AdjustedChildProgress / Length) )) and			
+			is(UpdatedParentScore, (ParentOldScore + Plus) - Minus)
+		);
+		
+		// Update existing competence with the new score
+		UpdateCompetence(ParentName, ParentOldScore, UpdatedParentScore);
+		
+		// Update the parent competence
+		updateParent( GrandParent, ParentOldScore, UpdatedParentScore)		
+	}
+	
+	/*	The parent node is the tree root	*/
+	updateParent( root, ChildOldScore, ChildProgress ) <- true |
+	{
+		skip
+	}
+	
+	
+	
+	/*	Determining next learning focus	
+	
+		Invariant: When each child of a competence node ranges between 80-100, the competence node itself will be 50%
+			This means that when a main skill is < 50, there exists a sub-skill that must be trained. 
+			This infers that it is not possible to look at an empty list of sub skills and thus reduces possible cases
+	*/	
+	
+	/*	Start with the root skill of the tree
+			Score >= 50: pick root skill as learning focus
+			Score < 50: inspect the sub skills of the root skill, randomly choose one
+	*/
+	determineLearningFocus() <- competence(Skill, Score, root, SkillList) |
+	{
+		if B(Score >= 50) then 
+		{
+			UpdateLearningFocus(Skill)
+		} 
+		else if B( Score < 50 ) then
+		{
+			determineRandomLearningFocus(SkillList)			
+		}
+	}
+	
+	/* 	Look at the underlying competences of the main competence, each a LEAF 
+			Score < 80: skill must be trained again until score > 80, so skill will be learning focus 
+			Score >= 80: skill is trained well, inspect the skill's siblings, randomly choose one
+	*/
+	determineLearningFocus( [ Skill | Rest ] ) <- competence( Skill, Score, Parent, [] ) |
+	{
+		if B( Score < 80 ) then 
+		{
+			UpdateLearningFocus(Skill)
+		}
+		else if B( Score >= 80 ) then 
+		{
+			determineRandomLearningFocus(Rest)					
+		}	
+	}
+	
+	/* 	Look at the underlying competences of the main competence, each a NODE
+			Score < 50: inspect the sub skills, randomly choose one
+			50 >= Score < 80: sub skills are trained well, main skill will be learning focus
+			Score >= 80: main skill and subs skills are trained well, inspect the skill's siblings, randomly choose one
+	*/
+	determineLearningFocus( [ Skill | Rest ] ) <- competence(Skill, Score, Parent, SkillList) |
+	{
+		if B( Score < 50 ) then
+		{
+			determineRandomLearningFocus(SkillList)
+		}
+		else if B( Score < 80 and Score >= 50 ) then 
+		{
+			UpdateLearningFocus(Skill)		
+		}
+		else if B( Score >= 80 ) then
+		{
+			determineLearningFocus(Rest)
+		}
+	}
+	
+	/*	Select a random competence to test next	*/
+	determineRandomLearningFocus( SkillList ) <- true |
+	{	
+		B(
+			length(SkillList, Length) and
+			is( Index, int(random(Length)) ) and
+			nth0(Index, SkillList, Element) and
+			delete(SkillList, Element, Abridged_SkillList)
+		);
+		determineLearningFocus( [ Element | Abridged_SkillList ] )	
+	}
+	
+	/*	Something went wrong in determining the next learning focus - should be impossible	*/
+	determineLearningFocus( [] ) <- true |
+	{
+		UpdateLearningFocus(something_went_wrong)
+	}	

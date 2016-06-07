@@ -1,0 +1,15 @@
+<apaplmas>
+	<environment name="env" file="env.jar"/>
+	
+	<agent name="director" file="director.2apl"/>
+	<agent name="planner" file="planner.2apl"/>
+	<agent name="monitor" file="monitor.2apl"/>
+	<agent name="usermodel" file="user_model.2apl" shadow="true"/>
+	
+	<agent name="trainee" file="characters/trainee.2apl" shadow="true"/>	
+	
+	<agent name="christian" file="characters/christian.2apl" shadow="true"/>
+	<agent name="marieke" file="characters/marieke.2apl" shadow="true"/>
+	<agent name="pauline" file="characters/pauline.2apl" shadow="true"/>
+	<agent name="sylvia" file="characters/sylvia.2apl" shadow="true"/>
+</apaplmas>

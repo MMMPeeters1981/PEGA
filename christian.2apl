@@ -1,0 +1,5 @@
+/*
+	Standard definition for a victim agent.
+*/
+
+Include: victim.2apl

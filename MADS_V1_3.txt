@@ -1,0 +1,79 @@
+---- Adaptive Educational Games - Multi Agent System V1_3 ----
+
+Changes made by Christian van Rooij, 30-10-2013
+
+user_model.2apl:
+The user model is added to the MADS. It has the following functions:
+* Update competence tree
+* Determine next learning focus
+* Determine level of scaffolding
+* Keep track of trainee's motivation
+
+monitor.2apl:
+* Bugfix: TimeOut with LoS = 0 resulted into no action at all and the crashing of the time-out mechanism
+* Part of the user model is also implemented in the Monitor agent. After the trainee finishes a scenario, the scenario score is calculated through the logged actions in the monitor.
+
+planner.2apl:
+* Because no plan can be found for each possible learning focus (only a plan for gerust_stellen is implemented), the complete deliberation cycle of the MADS is not possible. By un-commenting line 108 and commenting line 105 in planner.2apl, the user can switch between selecting a plan according to the learning focus, or simply selecting the first plan.
+
+director.2apl:
+* When in a scenario multiple locations are available, it is possible that no helper was spawned next to the victim or trainee, causing an error in the auction mechanism (there is no highest bid, thus the auction won't stop) - THIS BUG WAS NOT FIXED, the easiest workaround is not to use multiple locations
+
+For more details on these functionalities, see the comments in the accompanying .2apl files.
+
+---- Adaptive Educational Games - Multi Agent System V1_2 ----
+
+Changes made by Christian van Rooij, 10-10-2013
+
+Notes:
+* Multiple problems with asynchronous behaviour solved
+* No changes in environment
+* IMPORTANT: timeouts to determine when the trainee is too slow, are determined with the help of timestamps in the java environment. When using the step-by-step 2APL deliberation cycle button, the timeouts do not work well because a different time measure is used (the real time). This may cause problems when using the application
+* Deliberation cycle implemented, to ensure all communication is done through the director agent. The different states of the director are:
+initialisation(usermodel) ->  initialisation(planner) -> initialisation(scenario) -> scenario(run) -> scenario(end) -> scenario(evaluate) -> initialisation(usermodel) -> ...
+
+More elaborate:
+1. When the program is launched, the application cycle is started by the director
+2. The director asks the trainee model to infer the learning focus and level of scaffolding
+3. At the same time, all the agents register with the director
+4. The inferred level of scaffolding and learning focus is send back to the director, who sends it to the planner, who will use it to selects the best fitting scenario
+5. The monitor sends the scenario plan to the director. The director sends the plan to the monitor and starts multiple auctions to assign the positions and necessary actions to initialize the scenario to the characters
+6. When all the auctions have taken place, meaning that everything is in place and the scenario is ready to start, the director notifies the monitor that the scenario can begin
+6. The scenario is run by the trainee, according to the action plan. Whenever the trainee misses an action or waits too long, one of the characters should interfere by giving a hint or performing an action. An auction is held by the director to choose the most believable character to perform the interference
+7. When the action plan is finished and the involved characters also actually performed the necessary actions, the scenario stops and additional information is asked to the trainee
+8. The gained information is send to the director. The director first resets all the beliefs of the different agents. Additionally, the gained user information is  send to the user model
+9. The user model updates its information about the user, infers the next learning focus and level of scaffolding and sends this information back to the director
+10. The cycle returns to step 4
+
+
+---- Adaptive Educational Games - Multi Agent System V1_1 ----
+
+Wijzigingen door Christian van Rooij, 18-09-2013
+
+director.2apl:
+* Bugfix: GiveRole aangepast zodat ook een character met bekende rol kan worden gebruikt
+
+monitor.2apl:
+* TimeOut: ophogen LoS bij time-out
+* Log van trainee acties genoramliseerd naar: log(action(ACTION), scaffolding(SCAFFOLDING), mistakes(N), (no)timeout)
+* Bugfix: verlagen LoS bij goede actie
+
+planner.2apl: 
+* Initial level of scaffolding in scenario plan verwijderd
+* Standaard scenario veranderd naar een scenario met slechts een locatie
+
+trainee.2apl
+* Regels toegevoegd voor afhandelen stabiliseren victim
+
+character.2apl
+* Bugfix: CharacterRole aangepast zodat ook een character met bekende rol kan worden gebruikt
+* Bugfix: requestRole pr-rule verplaatst naar npc.2apl om oneindige aanroep op te lossen
+* Bugfix: herdefinitie van recursieve aanroep van addNearbyCharacters, om lege lijsten te kunnen gebruiken
+
+npc.2apl
+* Standaardboodschap ingesteld voor niet-oplosbare actie
+* Bugfix: actualize plan aangepast zodat procedure requestRole direct wordt aangeroepen
+
+Env.java: 
+* Bugfix: verkeerd aanroepen van departed en entered voor characters verbeterd
+* Bugfix: dubele lijst bij teruggeven aantal characters op een locatie

@@ -1,0 +1,69 @@
+/*
+	Standard definition for the trainee (PC/puppet) agent.
+*/
+
+Include: character.2apl
+	
+PC-rules:
+	/*
+		Handling all events from the environment to control the trainee character. Sends a storymessage to the environment and does an action
+		based on the requested action.
+	*/
+	event( calm(CHAR), env ) <- nearby(character(CHAR)) |
+	{[
+		B(VARLIST = [CHAR]);
+		@env( storyMessage( 'is trying to calm %t', VARLIST ), _ );
+		send( CHAR, request, mental_state(calm) )
+	]}
+	
+	
+	event( stabilize(CHAR), env ) <- nearby(character(CHAR)) |
+	{[
+		B(VARLIST = [CHAR]);
+		@env( storyMessage( 'is trying to stabilize %t', VARLIST ), _ );
+		send( CHAR, request, cure(broken_limb) )
+	]}
+	
+	
+	event( pickup(OBJ), env ) <- not carrying(object(OBJ)) and nearby(object(OBJ)) |
+	{[
+		B(VARLIST = [OBJ]);
+		@env( storyMessage( 'has picked up %t', VARLIST ), _ );
+		PickupObject(OBJ)
+	]}
+	
+	event( drop(OBJ), env ) <- carrying(object(OBJ)) |
+	{[
+		B(VARLIST = [OBJ]);
+		@env( storyMessage( 'has dropped %t', VARLIST ), _ );
+		DropObject(OBJ)
+	]}
+	
+	
+	event( nothing(CHAR), env ) <- nearby(character(CHAR)) |
+	{[
+		B(VARLIST = [CHAR]);
+		@env( storyMessage( 'is doing nothing to help %t', VARLIST ), _ );		
+		send( CHAR, request, perform(nothing) )
+	]}
+	
+	
+	/*
+		In case the character receives a new position, reset all nearby objects/characters and add the new ones.
+	*/
+	event( new_position(Position, Objects, Characters), env ) <- true |
+	{[
+		Position(Position);
+		resetNearby();
+		addNearbyObjects(Objects);
+		addNearbyCharacters(Characters)
+	]}
+	
+	/*
+		Resetting the beliefs about the scenario, to start with a new one
+	*/
+	message( director, inform, _, _, reset(beliefs) ) <- true |
+	{[
+		reset(beliefs);
+		ResetCharacter()
+	]}

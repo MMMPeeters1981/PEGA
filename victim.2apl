@@ -1,0 +1,69 @@
+/*
+	Standard definition for a victim agent.
+*/
+
+Include: npc.2apl
+	
+Beliefs:
+	/*
+		can_update( State )
+		
+		Description: Define whether the agent can update certain states.
+	*/
+	can_update(mental_state).
+	can_update(physical_state).
+	
+	/*
+		can( Goal )
+		
+		Description: Define the ability of this type of agent to achieve certain goals.
+	*/
+	break_limb :- break_arm; break_leg.
+	
+	can(break_limb).
+	
+	can(break_arm).
+	can(break_leg).
+		
+	
+	/*
+		achieve( Goal, Goal2, BelievabilityScore (higher = more believable and subsequently, gives a higher chance of getting selected in auctions) )
+		followed by achieve( Goal2, Requirement, BelievabilityScore )
+		
+		Description: Define how the agents can achieve said goals.
+	*/
+	achieve(break_arm, falling, 10).
+	achieve(break_leg, falling, 10).
+	
+	achieve(falling, object(table), 5).
+	achieve(falling, object(chair), 10).
+	achieve(falling, object(stairs), 20).
+	
+PG-rules:
+	/*
+		actualize( plan( Goal2, Requirement ), Goal,  ) <- required knowledge
+		
+		Description: Define what the agent has to do to actualize a plan when said agent wins the auction.
+		Note: role knowledge role(CHAR, ROLE) will be automatically resolved by a function requesting knowledge of said role if it is not known.
+	*/
+	actualize(plan(falling, object(Object)), break_arm) <- nearby(object(Object)) |
+	{[
+		MentalState(panic);
+		AddPhysicalState(broken_limb);
+		
+		B(VARLIST = [Object]); /* [Workaround] passing [Object] directly to storyMessage just passes as an empty list. */
+		@env( storyMessage( 'has fallen over the %t', VARLIST ), _ );
+		@env( storyMessage( 'has broken his/her arm!', [] ), _ );
+		dropgoal( actualize(plan(falling, object(Object)), break_arm) )
+	]}
+
+	actualize( plan(falling, object(Object)), break_leg ) <- nearby(object(Object)) |
+	{[
+		MentalState(panic);
+		AddPhysicalState(broken_limb);
+		
+		B(VARLIST = [Object]); /* [Workaround] passing [Object] directly to storyMessage just passes as an empty list. */
+		@env( storyMessage( 'has fallen over the %t', VARLIST ), _ );
+		@env( storyMessage( 'has broken his/her leg!', [] ), _ );
+		dropgoal( actualize(plan(falling, object(Object)), break_leg) )
+	]}

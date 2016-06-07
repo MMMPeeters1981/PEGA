@@ -1,0 +1,279 @@
+/*	
+	User model implementation - on-line part, considered with:
+		Applying scaffolding, according to the trainee's behaviour
+		Calculating scenario score
+		
+	Especially contains the "observing, processing and adapting" steps of the personalization cycle
+*/
+
+BeliefUpdates:
+	/* Belief update for saving the Actionplan and initial Scaffolding */
+	{ not actionplan(ACTIONPLAN) and not scaffolding(_) }										ActionPlan(ACTIONPLAN, SCAFFOLDING)		{ actionplan(ACTIONPLAN), scaffolding(SCAFFOLDING) }
+		
+	/* Starting the monitor */
+	{ not start(monitor) and not scenario(done) }												StartMonitor()							{ start(monitor) }
+	
+	/* Ending the monitor */
+	{ start(monitor) }																			StopMonitor()							{ not start(monitor) }	
+	
+	/* Reinitialising belief base */
+	{ 	scenario(done) and scaffolding(Scaffolding) and necessaryActions(Actions) and 
+		totalScore(Score) and scenarioScore(ScenarioScore) }									ResetScenario()							{ not scenario(done), mistakes(0), not scaffolding(Scaffolding), not necessaryActions(Actions),	not totalScore(Score), not scenarioScore(ScenarioScore)	}
+	
+	{ log(A1, S1, M1, T1) }																		DeleteLog(log(A1, S1, M1, T1))			{ not log(A1, S1, M1, T1) }
+
+	/* Adding a time constraint */
+	{ not time_constraint(ACTION) }																TimeConstraint(ACTION)					{ time_constraint(ACTION) }
+	
+	
+	/* Maintaining and building up the total scenario score */
+	{ totalScore(Old) } 																		UpdateTotalScore(New)					{ not totalScore(Old), totalScore(Old + New) }
+	{ } 																						UpdateTotalScore(New)					{ totalScore(New) }
+	{ } 																						RegisterScore(ScenarioScore)			{ scenarioScore(ScenarioScore) }
+	{ }																							AddNecessaryAction(Actions)				{ necessaryActions(Actions) }
+	
+		
+	/*
+		Timeouts do something based on the scaffolding level. In case the scaffolding level is 3 when the trainee time's out, 
+		the action is doneby another character. Whenever an action in the actionplan is successfully executed by the trainee
+		or auctioned off to another character, the monitor goes to the next action.
+		After an action is performed, a log entry is made, format: log(action(ACTION), scaffolding(SCAFFOLDING), mistakes(N), (no)timeout)
+	*/
+	/* These 2 timeouts are for the last action in the actionplan */
+	{ actionplan([action(ACTION, OPTIONS, TIMEOUT)]) and time_constraint(ACTION) and mistakes(N)
+	  and scaffolding(3) }																		TimeOut(ACTION)							{ not time_constraint(ACTION), not actionplan([action(ACTION, OPTIONS, TIMEOUT)]), log(action(ACTION), scaffolding(3), mistakes(N), timeout), not mistakes(N), scenario(done) }
+	{ actionplan([action(ACTION, OPTIONS, TIMEOUT)]) and time_constraint(ACTION) and mistakes(N)
+ 	  and scaffolding(SCAFFOLDING) }															TimeOut(ACTION)							{ not time_constraint(ACTION), log(action(ACTION), scaffolding(SCAFFOLDING), mistakes(N), timeout), not mistakes(N), mistakes(0), not scaffolding(SCAFFOLDING), scaffolding(SCAFFOLDING+1) }
+	
+	/* These 2 timeouts are for any action but the last action in the actionplan */
+	{ actionplan([action(ACTION, OPTIONS, TIMEOUT)|REST]) and time_constraint(ACTION) and mistakes(N)
+	  and scaffolding(3) }																		TimeOut(ACTION)							{ not time_constraint(ACTION), not actionplan([action(ACTION, OPTIONS, TIMEOUT)|REST]), actionplan(REST), log(action(ACTION), scaffolding(3), mistakes(N), timeout), not mistakes(N), mistakes(0) }
+	{ actionplan([action(ACTION, OPTIONS, TIMEOUT)|REST]) and time_constraint(ACTION) and mistakes(N)
+	  and scaffolding(SCAFFOLDING) }															TimeOut(ACTION)							{ not time_constraint(ACTION), log(action(ACTION), scaffolding(SCAFFOLDING), mistakes(N), timeout), not mistakes(N), mistakes(0), not scaffolding(SCAFFOLDING), scaffolding(SCAFFOLDING+1) }
+
+	  
+	/*
+		TestAction tests whether the trainee's taken action is correct. If it is incorrect it will increase the scaffolding.
+		Whenever an action in the actionplan is successfully executed by the trainee or auctioned off to another character, the monitor goes to
+		the next action.
+	*/
+	/* Testaction for correctly executing the last action in the actionplan */
+	{ actionplan([action(ACTION, OPTIONS, TIMEOUT)]) and mistakes(N) and time_constraint(ACTION)
+	  and scaffolding(SCAFFOLDING) }															TestAction(ACTION)						{ not time_constraint(ACTION), not actionplan([action(ACTION, OPTIONS, TIMEOUT)]), log(action(ACTION), scaffolding(SCAFFOLDING), mistakes(N), notimeout), not mistakes(N), scenario(done) }
+		
+	/* These 2 testactions are for correctly executing any action but the last action in the actionplan */
+	{ actionplan([action(ACTION, OPTIONS, TIMEOUT)|REST]) and mistakes(N) and time_constraint(ACTION)
+	  and scaffolding(0) }																		TestAction(ACTION)						{ not time_constraint(ACTION), not actionplan([action(ACTION, OPTIONS, TIMEOUT)|REST]), actionplan(REST), log(action(ACTION), scaffolding(0), mistakes(N), notimeout), not mistakes(N), mistakes(0) }
+	{ actionplan([action(ACTION, OPTIONS, TIMEOUT)|REST]) and mistakes(N) and time_constraint(ACTION)
+	  and scaffolding(SCAFFOLDING) }															TestAction(ACTION)						{ not time_constraint(ACTION), not actionplan([action(ACTION, OPTIONS, TIMEOUT)|REST]), actionplan(REST), log(action(ACTION), scaffolding(SCAFFOLDING), mistakes(N), notimeout), not mistakes(N), mistakes(0), not scaffolding(SCAFFOLDING), scaffolding(SCAFFOLDING-1) }
+	
+	/* These 2 testactions are for incorrectly executing any action in the actionplan */
+	{ not actionplan([action(ACTION, OPTIONS, TIMEOUT)|_]) and mistakes(N)
+	  and scaffolding(3) }																		TestAction(ACTION)						{ not mistakes(N), mistakes(N+1) }
+	{ not actionplan([action(ACTION, OPTIONS, TIMEOUT)|_]) and mistakes(N)
+	  and scaffolding(SCAFFOLDING) }															TestAction(ACTION)						{ not mistakes(N), mistakes(N+1), not scaffolding(SCAFFOLDING), scaffolding(SCAFFOLDING+1) }
+
+
+Beliefs:
+	/* Initially 0 mistakes are made. */
+	mistakes(0).
+	
+Goals:
+	/* Monitor's goals */
+	keep( time_constraint )	
+	
+PG-rules:
+	/*
+		When the trainee is expected to perform an action, a time constraint is expected. 
+		As such, each action has a Time variable (in seconds). This is then passed on to 
+		the environment. A timer thread is then made in the environment which will throw 
+		the event in the specified amount of time.
+	*/
+	keep( time_constraint ) <- not scenario(done) and start(monitor) and actionplan([action(ACTION, _, TIME)|_]) and not time_constraint(ACTION) |
+	{[
+		TimeConstraint(ACTION);
+		@env( timerEvent( ACTION, TIME ), _ )
+	]}
+	
+PC-rules:
+	/* 
+		When the director informs the monitor of the actionplan, save the actionplan and scaffolding in the beliefbase. 
+	*/
+	message( director, inform, _, _, actionplan(ACTIONPLAN, SCAFFOLDING) ) <- true |
+	{
+		retrieveNecessaryActions(ACTIONPLAN, []);
+		ActionPlan(ACTIONPLAN, SCAFFOLDING)
+		
+	}
+	
+	/*
+		Subtract the necessary actions
+	*/
+	retrieveNecessaryActions([action(Action, Options, Time) | REST], SkillList) <- true |
+	{
+		if B( REST = [] ) then {		
+			AddNecessaryAction([Action | SkillList])
+		} else {
+			retrieveNecessaryActions(REST, [Action | SkillList] )
+		}
+	}	
+	
+	
+	/*
+		When the director informs the monitor to start, it starts.
+	*/
+	message( director, inform, _, _, start(monitor) ) <- not start(monitor) and not scenario(done) |
+	{[
+		StartMonitor()	
+	]}
+	
+	
+	/*
+		When the scenario plan is finished, ask the trainee some necessary questions and inform the director about the scenario results
+	*/
+	message( director, inform, _, _, scenario(evaluate) ) <- scenario(done) |
+	{[
+		// Ask the trainee for its current motivation
+		B(VARLIST = [ ["1", "1"], ["3", "3"], ["5", "5"], ["7", "7"], ["9", "9"] ]);		
+		@env( speechAct( monitor, ': Please assign a number to you current motivation (1 = not motivated, 9 = very motivated)', VARLIST), X);
+		B(X = [actionresult(Z)] and Y = [Z]);
+		
+		// Calculate scenario score
+		calculateScore();
+		B(scenarioScore(Score));
+		
+		// Inform the director of the results		
+		send( director, inform, performance(score( Score ), motivation( Z ) ))
+	]}
+	
+	
+	/*
+		Resetting the different scenario dependent beliefs when the scenario is finished
+	*/
+	message( director, inform, _, _, reset(beliefs) ) <- scenario(done) |
+	{[
+		ResetScenario()
+	]}
+
+	/*
+		If the trainee performs an action (thrown by the environment), it is tested by the monitor.
+	*/
+	event( trainee_action(ACTION), env ) <- not scenario(done) and start(monitor) |
+	{[
+		TestAction(ACTION);
+		checkDevelopement()
+	]}
+
+	/* 
+		If the timer event is thrown, the current level of scaffolding is used to determine what action to take,
+		based on the actionplan. For scaffolding 0, no action is taken.
+	*/
+	event( timer(ACTION), env ) <- not scenario(done) and actionplan([action(ACTION, [GOAL1, GOAL2, GOAL3], _)|_]) and time_constraint(ACTION) and scaffolding(SCAFFOLDING) |
+	{[
+		if B(SCAFFOLDING = 0) then
+		{
+			skip
+		}
+		else if B(SCAFFOLDING = 1) then
+		{
+			send( director, inform, auction( GOAL1 ) )
+		}
+		else if B(SCAFFOLDING = 2) then
+		{
+			send( director, inform, auction( GOAL2 ) )
+		}
+		else if B(SCAFFOLDING = 3) then
+		{
+			send( director, inform, auction( GOAL3 ) )
+		};
+		TimeOut(ACTION);		
+		checkDevelopement()
+	]}
+	
+	
+	/*	
+		Check if the scenario has ended due to a time out or a correct action
+	*/	
+	checkDevelopement() <- scenario(done) |
+	{
+		StopMonitor();
+		send( director, inform, end( scenario ) )	
+	}
+	
+	checkDevelopement() <- true | 
+	{
+		skip
+	}
+	
+
+	
+	/*	Recursive function to calculate the score at the end of the scenario, by examining the scenario log
+		Log details: 
+			Format: log(action(ACTION), scaffolding(SCAFFOLDING), mistakes(N), (no)timeout)
+			An action is logged when a time-out takes place or the action is performed by the trainee or a character. 
+			In the belief base, the log is build up sequentially: logs are ordered according to time.
+			
+		Mistake details:
+			When a time-out takes place, the amount of mistakes do not directly influence the maximum score; 
+				each mistake causes the LoS to drop, causing MaxScore to drop, resulting in the preferred behaviour.
+			When a time-out has occurred before the trainee correctly finishes the Action, possible mistakes 
+				have a relatively bigger influence on the Score			
+	*/
+	calculateScore() <- necessaryActions( ActionList ) |
+	{
+		calculateActionScore(ActionList, 100)
+	}
+	
+	/*	Calculate scenario score: no more actions are left, lets wrap things up!	*/
+	calculateActionScore( [], MaxScore ) <- necessaryActions( ActionList ) |
+	{
+		// Calculate the average score of the whole scenario		
+		B( 	
+			totalScore(X) and
+			length(ActionList, Length) and
+			is( ScenarioScore, (X / Length)) 
+		);		
+		RegisterScore(ScenarioScore)
+	}
+		
+	/*	Calculate scenario score: the action got a time-out	*/
+	calculateActionScore( [Action | REST], MaxScore ) <- log(action(Action), scaffolding(Scaffolding), mistakes(N), timeout) |
+	{
+		if B(Scaffolding = 3) then {
+			
+			// instantly give a 0 performance score			
+			UpdateTotalScore(0);			
+			
+			// delete log entry
+			DeleteLog(log(action(Action), scaffolding(Scaffolding), mistakes(N), timeout));
+			
+			// continue with the next log entry
+			calculateActionScore( REST, 100 )
+		} 
+		else
+		{
+			// decrease the maximal possible score
+			B(	is(NewMaxScore, ( 100 - (25 * (Scaffolding + 1)) ))	);
+						
+			DeleteLog(log(action(Action), scaffolding(Scaffolding), mistakes(N), timeout));
+			
+			// continue with the next log entry about this action, since Action was not yet finished
+			calculateActionScore( [Action | REST], NewMaxScore )			
+		}
+	}	
+	
+	/*	Calculate scenario score: the action was done correctly by the trainee	*/
+	calculateActionScore( [Action | REST], MaxScore ) <- log(action(Action), scaffolding(Scaffolding), mistakes(N), notimeout) |
+	{
+		// Calculate the action score, subtract the penalty due to the amount of mistakes made from the maximal possible score (25 per mistake)
+		B( is(ActionScore, max(0, (MaxScore - (N * 25)))) );
+		
+		// add the action score to the total score
+		UpdateTotalScore(ActionScore);
+		
+		// delete log entry
+		DeleteLog(log(action(Action), scaffolding(Scaffolding), mistakes(N), notimeout));
+		
+		// continue with the next action
+		calculateActionScore( REST, 100 )
+	}

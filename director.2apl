@@ -1,0 +1,336 @@
+/*
+ * This is an example model for a new 2APL project
+ */
+ 
+BeliefUpdates:
+
+	/* Change the current application cycle state */
+	{ state(OldState) } 												ChangeState(NewState)				{ not state(OldState), state(NewState) }
+	{}																	AddLearningFocus(LearningFocus)		{ learningFocus(LearningFocus) }	
+		
+	/* BeliefUpdates for resetting the scenario dependent director beliefs */
+	{ }																	Reset(director)						{ reset(director) }
+	{ learningFocus(LF) }												DeleteBelief()						{ not learningFocus(LF) }
+	{ informed(X, Y) }													DeleteBelief()						{ not informed(X, Y) }
+	{ role(Char, Role) }												DeleteBelief()						{ not role(Char, Role) }
+	{ goal_role(Goal, Role) }											DeleteBelief()						{ not goal_role(Goal, Role) }
+	{ informed_count(M, N) }											DeleteBelief()						{ not informed_count(M, N) }
+	{ bid(Char, Goal, Plan, Score) }									DeleteBelief()						{ not bid(Char, Goal, Plan, Score) }
+	{ best(X) }															DeleteBelief()						{ not best(X) }
+	{ }																	DeleteBelief()						{ not reset(director) }
+
+	/*
+		Belief updates to keep tracks of which agent received which message and the amount of agents that message has been sent to.
+	*/
+	{ not informed(trainee, MESSAGE) }									Informed(trainee, MESSAGE)			{ informed(trainee, MESSAGE) }
+	{ not informed(AGENT, MESSAGE) and 
+		informed_count(MESSAGE, N) }									Informed(AGENT, MESSAGE)			{ informed(AGENT, MESSAGE), not informed_count(MESSAGE, N), informed_count(MESSAGE, N+1) }
+	{ not informed(AGENT, MESSAGE) }									Informed(AGENT, MESSAGE)			{ informed(AGENT, MESSAGE), informed_count(MESSAGE, 1) }
+	
+	
+	/*
+		Belief updates for registering the trainee and other characters.
+	*/
+	{ not present(trainee) }											RegisterTrainee()					{ present(trainee) }
+	{ not registered(CHAR) and characters(N) }							RegisterCharacter(CHAR)				{ registered(CHAR), not characters(N), characters(N+1) }
+	
+	
+	/* GiveRole(CHAR, ROLE) Gives a ROLE to a certain CHAR (only 1 role per character) */
+	{ registered(CHAR) and (role(CHAR, ROLE) 
+		or not role(CHAR, _)) }											GiveRole(CHAR, ROLE)				{ role(CHAR, ROLE) }
+	
+	
+	/*
+		Open and close updates for auctions. Auctions also have a role attached to them. The winner of an auction gets that role.
+	*/
+	{ not auction(GOAL) and not goal_role(GOAL, _) and auctions(N) }	OpenAuction(GOAL, ROLE)				{ auction(GOAL), bids(GOAL, 0), goal_role(GOAL, ROLE), not auctions(N), auctions(N+1) }
+	{ auction(GOAL) and bids(GOAL, N) and characters(N) and 
+		best(bid(_, GOAL, _, _)) and auctions(M) }						CloseAuction(GOAL)					{ not bids(GOAL, N), not auction(GOAL), not auctions(M), auctions(M-1) }
+	
+	
+	/*
+		Updating functions for adding a bid to the auction system and updating the best bid.
+	*/
+	{ not bid(CHAR, GOAL, _, _) and bids(GOAL, N) }						Bid(CHAR, GOAL, PLAN, SCORE)		{ bid(CHAR, GOAL, PLAN, SCORE), not bids(GOAL, N), bids(GOAL, N+1) }
+	{ not best(bid(CHAR1, GOAL, PLAN1, SCORE1)) or
+		(best(bid(CHAR1, GOAL, PLAN1, SCORE1)) and SCORE1 < SCORE2) }	BestBid(CHAR2, GOAL, PLAN2, SCORE2)	{ not best(bid(CHAR1, GOAL, PLAN1, SCORE1)), best(bid(CHAR2, GOAL, PLAN2, SCORE2)) }
+
+
+Beliefs:
+	/* Initial number of characters/auctions (should always be 0 at the start) */
+	state( initialisation(usermodel) ).
+	characters(0).
+	auctions(0).
+		
+	/* Definition of when an auction is complete */
+	auction_complete(GOAL) :- characters(N), bids(GOAL, N).
+	
+	/* Definition of when a character has his/her position */
+	in_position(characters) :- characters(N), informed_count(position, N).
+	
+	/* A custom function to get a random element from a list. */
+	random_element([], _) :- !, fail.
+	random_element(List, Element) :-
+		length(List, Length),
+		is(Index, int(random(Length))),
+		nth0(Index, List, Element).
+
+
+Plans:
+	/* Start application cycle by requesting user data from the user model */
+	send( usermodel, request, request(userModelData) )
+		
+PG-rules:
+
+	/*
+		Holding auctions is active as long as there are auctions (auctions(>0)). The auction is 
+		considered to be complete all characters have posted a bid. Furthermore, the characters 
+		all have to have a position in order for the auctions to be held. When an auction is complete,
+		the best bid is selected and that character is given the role and is told to actualize his/her plan. 
+	*/
+	hold( auctions ) <- auction(Goal) and in_position(characters) and auction_complete(Goal) |
+	{[
+		B( best(bid(Character, Goal, Plan, _)) and goal_role(Goal, Role) );
+		
+		GiveRole( Character, Role );
+		@env( giveRole( Character, Role ), _ );
+		
+		send( Character, propose, actualize(Plan, Goal) );
+		
+		CloseAuction(Goal)
+	]}	
+	
+	hold( auctions ) <- auction(Goal) and in_position(characters) and not auction_complete(Goal) and registered(Character) and not informed(Character, Goal) |
+	{
+		send( Character, inform, auction(Goal) );
+		
+		Informed(Character, Goal)
+	}
+	
+	
+	/*
+		Assigns characters and the trainee to a random position.
+	*/	
+	assign(characters, positions(Positions)) <- registered(Character) and not informed(Character, position) |
+	{[
+		B( random_element(Positions, Position) );
+		send( Character, inform, position(Position) );
+		
+		Informed(Character, position);
+		
+		if B( characters(N) and informed_count(position, N) ) then
+		{
+			dropgoal( assign( characters, positions(Positions) ) )
+		}
+	]}
+	
+	assign(trainee, positions(Positions)) <- present(trainee) and not informed(trainee, position) |
+	{[
+		B( random_element(Positions, Position) );
+		send( trainee, inform, position(Position) );
+		
+		Informed(trainee, position);
+		
+		dropgoal( assign( trainee, positions(Positions) ) )
+	]}
+	
+	/*
+		When all scenario initialisation auctions are finished, start the monitor, drop the auctioning goal
+	*/
+	hold( auctions ) <- state(initialisation(scenario)) and auctions(0) |
+	{[
+		ChangeState( scenario(run) );
+		dropgoal( hold( auctions ) );
+		send( monitor, inform, start(monitor) )
+	]}
+
+	hold( auctions ) <- state(scenario(run)) and auctions(0) |
+	{[
+		dropgoal( hold( auctions ) )
+	]}
+	
+
+PC-rules:
+		
+	/*
+		Getting registration messages from characters/trainee registers the character/trainee in the director's beliefbase.
+	*/
+	message( trainee, inform, _, _, register(me) ) <- not present(trainee) |
+	{
+		RegisterTrainee()
+	}
+
+	message( Character, inform, _, _, register(me) ) <- not registered(Character) |
+	{
+		RegisterCharacter(Character)
+	}
+	
+	
+	/*
+		When a character requests what character fulfils a certain Role, the director sends that information.
+	*/
+	message( Character, request, _, _, character_role(ROLE) ) <- role(CHAR, ROLE) |
+	{
+		send( Character, inform, role(CHAR, ROLE) )
+	}
+	
+	
+	/*
+		When a character informs the director of a bid, the director then registers that bid and 
+		registers it as the best bid if it is at that point.
+	*/
+	message( Character, inform, _, _, bid(Goal, no) ) <- auction(Goal) and registered(Character) and not bid(Character, Goal, _, _) |
+	{[
+		Bid(Character, Goal, no, 0)
+	]}
+	
+	message( Character, propose, _, _, bid(Goal, Plan, Score) ) <- auction(Goal) and registered(Character) and not bid(Character, Goal, _, _) |
+	{[
+		Bid(Character, Goal, Plan, Score);
+		
+		if B( best(bid(_, Goal, _, BestScore)) ) then
+		{
+			if B( Score > BestScore ) then
+			{
+				BestBid(Character, Goal, Plan, Score)
+			}
+		}
+		else
+		{
+			BestBid(Character, Goal, Plan, Score)
+		}
+	]}
+
+
+	/*
+		When an agent informs the director that another auction has to occur, the director opens a new auction.
+	*/
+	message( _, inform, _, _, auction( goal(Goal, Role) ) ) <- true |
+	{
+		OpenAuction(Goal, Role);
+		adopta( hold( auctions ) )
+	}
+	
+	/*
+		addAuctions( [goal( Goal, Role ) )
+		
+		Description: Recursive function which opens every auction from the list.
+	*/
+	addAuctions( [goal( Goal, Role ) | Rest] ) <- true |
+	{
+		OpenAuction(Goal, Role);
+		
+		B( length(Rest, Length) );
+		if B(Length > 0) then
+		{
+			addAuctions(Rest)
+		}
+	}
+	
+	
+	/*
+		Resetting the temporal scenario beliefs
+	*/			
+	reset(beliefs) <- true |
+	{[
+		Reset(director);
+		while B( reset(director) ) do
+		{
+			DeleteBelief()
+		}
+	]}
+	
+	/*
+		Informing each character to reset their belief base
+	*/	
+	reset(characters) <- registered(Character) and not informed(Character, reset(beliefs)) |
+	{[	
+		send(Character, inform, reset(beliefs));
+		Informed(Character, reset(beliefs));
+		
+		if B( registered(Character2) and not informed(Character2, reset(beliefs)) ) then 
+		{
+			reset(characters)
+		}
+	]}
+	
+	/*
+		Procedure call rules to monitor the application cycle centred by the director agent
+		General application transition rules are used to keep track of the states
+		initialisation(usermodel) ->  initialisation(planner) -> initialisation(scenario) -> scenario(run) -> scenario(end) -> scenario(evaluate) -> initialisation(usermodel) -> ...
+	*/
+	
+	/*		Initialisation of planner
+		The user model has inferred the next appropriate learning focus and level of scaffolding.
+		The planner uses this information to select an action plan
+	*/
+	message( usermodel, inform, _, _, userData( learningFocus(LearningFocus), scaffolding(Scaffolding) ) ) <- state( initialisation( usermodel ) ) | 
+	{
+		send( planner, inform, initiate(LearningFocus, Scaffolding) );
+		AddLearningFocus(LearningFocus);
+		
+		ChangeState(initialisation(planner))
+	}		
+
+	/*		Initialisation of scenario
+		The director receives information to initialise the scenario. Three actions are taken: the monitor is initialized,
+		the characters are given a position and the necessary action are divided among the characters through one or more auctions.		
+	*/
+	message( planner, inform, _, _, scenario( positions(Positions), auctions(Goals), actionplan( Actionplan, Scaffolding ) ) ) <- state( initialisation( planner ) ) |
+	{
+		// Positions: assign all characters including the trainee character to the possible positions.
+		adopta( assign(characters, positions(Positions)) );
+		adopta( assign(trainee, positions(Positions)) );
+		
+		// Auctions: add all auctions to the beliefbase and open them.
+		addAuctions( Goals );
+		adopta( hold( auctions ) );		
+		
+		// Actionplan: send actionplan to monitor agent
+		send( monitor, inform, actionplan( Actionplan, Scaffolding ) );
+
+		ChangeState(initialisation(scenario))
+	}		
+	
+	/*		End of scenario
+		The monitor notifies the director that the last action has been performed, either by the trainee or a helping character		
+	*/
+	message( monitor, inform, _, _, end( scenario ) ) <- state( scenario( run ) ) | 
+	{[
+		ChangeState(scenario(end))
+	]}
+	
+	/*		Evaluation of scenario
+		The involved character notifies the director that all the actions in the scenario plan have actually been performed
+		The monitor is notified to extract additional information from the trainee
+	*/	
+	message( Character, inform, _, _, stable(State) ) <- state( scenario( end ) ) | 
+	{
+		@env( storyMessage( 'says: the scenario has been completed ', [] ), _ );
+		
+		// Send a message to the monitor for additional inquiry of the trainee
+		send( monitor, inform, scenario(evaluate) );
+		
+		ChangeState(scenario(evaluate))
+	}
+	
+	/*		Reinitialisation of scenario
+		The trainee information gained during the scenario is resend to the user model.
+		The temporal beliefs of the different character agents, the trainee, the monitor 
+		and the director agent are reset to prepare the next scenario
+	*/
+	message( monitor, inform, _, _, performance(score( Score ), motivation( Motivation )) ) <- state( scenario( evaluate ) ) and learningFocus(LF) | 	
+	{	
+		@env( storyMessage( 'says: the scenario will be reinitialised', [] ), _ );
+		
+		// Make sure each character, the trainee, the director itself and the monitor is reset
+		send(monitor, inform, reset(beliefs));
+		send(trainee, inform, reset(beliefs));
+		reset(characters);
+		reset(beliefs);
+		
+		// Send the calculated performance score and additional information to the usermodel		
+		send(usermodel, inform, update(competence(LF, Score), motivation(Motivation)));
+		
+		ChangeState(initialisation(usermodel))
+	}

@@ -1,0 +1,125 @@
+/*
+ * This is an example model for a new 2APL project
+ */
+BeliefUpdates:
+	{ not learningFocus(X) }					SetLearningFocus(F)			{ learningFocus(F) }
+	{ not support(proactive) and support(X) } 	SupportProactive() 			{ not support(X), support(proactive) }
+	{ not support(reactive) and support(X) } 	SupportReactive() 			{ not support(X), support(reactive) }
+	{ not support(passive) and support(X) } 	SupportPassive() 			{ not support(X), support(passive) }
+	{ not scenario(infeasible) }				ScenarioInfeasible() 		{ not scenario(feasible), scenario(infeasible) }
+	{ not scenario(feasible) }					ScenarioFeasible() 			{ not scenario(infeasible), scenario(feasible) }
+	{ not informed(AGENT, MESSAGE) }			Informed(AGENT, MESSAGE)	{ informed(AGENT, MESSAGE) }
+	{ trainee(ok) and scenario(feasible) }		PlanStable()				{ not informed( trainee(bored) ), not informed( trainee(stressed) ), not informed( trainee(fatigued) ), not informed( scenario(infeasible) ) }
+	
+Beliefs:
+	/*
+		scenario( WorldName, WorldDescription,
+		[ //Positions
+			[ PositionName, PositionDescription, [ NearbyObject ] ]
+		],
+		[ //Initial Auctions for Characters
+			goal( Action, Role )
+		]
+		[ //Scenario Options
+			[ ActionDescription, ActionName, [ RequiredNearbyObject ], [ RequiredNearbyRole ] ]
+		],
+		[ //Action Plan
+			action( ActionName, 
+			[ // Auctions for every scaffold level
+				goal( hint( VagueHint ), Role ), // Auction for Scaffolding 1
+				goal( hint( ConcreteHint ), Role ), // Auction for Scaffolding 2
+				goal( Action, Role ) // Auction for Scaffolding 3
+			], TimeoutSeconds )
+		],
+		[ //Learning Focuses
+			learningfocus( LearningFocus )
+		] ).
+	
+		Note: Since these worlds are instantiated by the environment, there are limitations to how it is passed by the planner to the 
+		environment. More specifically, the environment seems to have trouble handling 'functions' (e.g. f(x)). Lists are used to bypass this 
+		problem.
+	*/
+	
+	scenario( living_room, 'Living room with kitchen and table, connected to stairs', 
+	[ /* scenario positions, serializable */
+		[ middle, 'Near the table', [ table, chair, plate ] ]		
+	],
+	[ /* initial auctions, not serializable */
+		goal( break_arm, victim )
+	],
+	[ /* scenario options, serializable */
+		['calm victim', calm, [], [victim]],
+		['stabilize limb', stabilize, [], [victim]],
+		['do nothing', nothing, [], [victim]]
+	],
+	[ /* action plan, not serializable */
+		action(calm, 
+		[
+			goal( hint('Wow, he/she needs to calm down!'), helper ),
+			goal( hint('Maybe you should try to calm him/her down first.'), helper ),
+			goal( calm(victim), helper )
+		], 10)		,
+		action(stabilize, 
+		[
+			goal( hint('That leg still looks very bad!'), helper ),
+			goal( hint('Perhaps you should try to stabilize the leg.'), helper ),
+			goal( stabilize(victim), helper )
+		], 10)
+	],
+	[
+		learningfocus( gerust_stellen )
+	] ).
+	
+	scenario( living_room, 'Living room with kitchen and table, connected to stairs', 
+	[ /* scenario positions, serializable */
+		[ west, 'Near the kitchen', [ knife, fork, stove ] ],
+		[ middle, 'Near the table', [ table, chair, plate ] ],
+		[ east, 'Near the stairs', [ stairs ] ]
+	],
+	[ /* initial auctions, not serializable */
+		goal( break_arm, victim )
+	],
+	[ /* scenario options, serializable */
+		['dada victim', calm, [], [victim]],
+		['dada leg', stabilize, [], [victim]]
+	],
+	[ /* action plan, not serializable */
+		action(calm, 
+		[
+			goal( hint('Wow, he/she needs to calm down!'), helper ),
+			goal( hint('Maybe you should try to calm him/her down first.'), helper ),
+			goal( calm(victim), helper )
+		], 20)
+	],
+	[
+		learningfocus( non_calming_victim )
+	] ).
+
+PG-rules:
+	/*
+		Instantiate the scenario based on a learning focus and a level of scaffolding.
+	*/
+	instantiate( scenario, LearningFocus, SCAFFOLDING ) <- true | 
+	{[
+		// If only one plan is available, ignore the learning focus and choose the first plan
+		B( scenario( NAME, DESC, POSITIONS, AUCTIONS, OPTIONS, ACTIONPLAN, LEARNINGFOCUSES )  );
+		
+		// If for each possible learning focus a plan is available, let the learning focus determine the plan
+		// B( scenario( NAME, DESC, POSITIONS, AUCTIONS, OPTIONS, ACTIONPLAN, LEARNINGFOCUSES ) and member( learningfocus( LearningFocus ), LEARNINGFOCUSES ) );
+		
+		@env( createScenario( NAME, DESC, POSITIONS, OPTIONS ), RESULT );		
+		B( RESULT = [actionresult(Positions)] );
+		
+		// Communicate all necessary information to initialize the scenario
+		send( director, inform, scenario( positions(Positions), auctions(AUCTIONS), actionplan( ACTIONPLAN, SCAFFOLDING ) ) );
+		
+		// Goal still has to be dropped
+		dropgoal( instantiate( scenario, LearningFocus, SCAFFOLDING ) )
+	]}
+	
+PC-rules:	
+
+	message( director, inform, _, _, initiate(LearningFocus, Scaffolding) ) <- true |
+	{
+		adopta( instantiate( scenario, LearningFocus, Scaffolding ) )
+	}

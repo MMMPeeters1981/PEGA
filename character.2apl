@@ -1,0 +1,170 @@
+/*
+	Standard definition for a character agent.
+*/
+
+BeliefUpdates:
+	/* Position(POS2) updates the position of the agent to the new position. */
+	{ position(POS1) and nearby(X) }							Position(POS2)					{ not position(POS1), not nearby(X), position(POS2) }
+	
+	/* Belief updates to add new nearby objects/characters or remove current ones. */
+	{ true }													NearbyObject(OBJ)				{ nearby(object(OBJ)) }
+	{ nearby(object(OBJ)) }										ObjectDeparted(OBJ)				{ not nearby(object(OBJ)) }
+	{ true }													NearbyCharacter(CHAR)			{ nearby(character(CHAR)) }
+	{ nearby(character(CHAR)) }									CharacterDeparted(CHAR)			{ not nearby(character(CHAR)) }
+	{ nearby(X) }												ResetNearby(X)					{ not nearby(X) }
+	
+	/* Belief updates to carry and drop objects. */
+	{ not carrying(object(OBJ)) and nearby(object(OBJ)) }		PickupObject(OBJ)				{ carrying(object(OBJ)) }
+	{ carrying(object(OBJ)) }									DropObject(OBJ)					{ not carrying(object(OBJ)) }
+	
+	/* CharacterRole(CHAR, ROLE) gives the current character knowledge of the ROLE a certain CHAR has. */
+	{ (not role(CHAR, _) and not role(_, ROLE)) or role(CHAR, ROLE) }					CharacterRole(CHAR, ROLE)		{ role(CHAR, ROLE) }
+	
+	/* BeliefUpdates for resetting the scenario dependent beliefs of the character */	
+	{ }															Reset(character)				{ reset(character) }	
+	{ position(X) }												ResetCharacter()				{ not position(X), nearby(nothing), position(nowhere) }	
+	{ nearby(X) }												DeleteBelief()					{ not nearby(X) }	
+	{ carrying(X) }												DeleteBelief()					{ not carrying(X) }	
+	{ role(Char, Role) }										DeleteBelief()					{ not role(Char, Role) }	
+	{ }															DeleteBelief()					{ not reset(character) }
+	
+Beliefs:
+	/* Initial position */
+	nearby(nothing).
+	position(nowhere).
+
+
+	/*
+		can_achieve(Goal, Requirement, Score)
+		
+		Description: This function defines whether the character can achieve said Goal with the specified Requirement. This should link back to the achieve(Goal, Requirement, Score) function.
+	*/
+	can_achieve(Goal, object(OBJ), Score) :- 
+		achieve(Goal, object(OBJ), Score), 
+		nearby(object(OBJ)).
+		
+	can_achieve(Goal, character(CHAR), Score) :- 
+		achieve(Goal, character(CHAR), Score).
+		
+	can_achieve(Goal, role(ROLE), Score) :- 
+		achieve(Goal, role(ROLE), Score).
+	
+Plans:
+	/* Inform the director that this character exists and needs to be registered. */
+	send( director, inform, register(me) )
+
+PC-rules:
+	/*
+		Events thrown by the environment in case a character/object enters the position of this character. Beliefs are updated accordingly.
+	*/
+	event( character_entered(Character), env ) <- true |
+	{[
+		NearbyCharacter(Character)
+	]}
+	
+	event( character_entered(Character), env ) <- true |
+	{[
+		CharacterDeparted(Character)
+	]}
+	
+	event( object_entered(Object), env ) <- true |
+	{[
+		NearbyObject(Object)
+	]}
+	
+	event( object_departed(Object), env ) <- true |
+	{[
+		ObjectDeparted(Object)
+	]}
+	
+	
+	/*
+		When the director informs the character in what position said character should be, the character places itself in the position via 
+		the environment and gets all information about that position (nearby characters and objects).
+	*/
+	message( director, inform, _, _, position(Position) ) <- true |
+	{[
+		@env( placeCharacter( Position ), POSRESULT );
+		if B( POSRESULT = [actionresult([Character|Rest])] ) then
+		{
+			addNearbyCharacters([Character|Rest])
+		};
+		Position(Position);
+		@env( getNearbyObjects( Position ), OBJRESULT );
+		B( OBJRESULT = [actionresult(Objects)] );
+		addNearbyObjects(Objects)
+	]}
+	
+	
+	/*
+		Getting a certain role for a character through the director by requesting it and then receiving it.
+	*/
+	message( director, inform, _, _, role(CHAR, ROLE) ) <- not role(CHAR, _) and not role(_, ROLE) |
+	{[
+		CharacterRole(CHAR, ROLE)
+	]}
+	
+	/*
+		resetNearby()
+		
+		Description: Resets all nearby objects and characters. Used when moving to a new position.
+	*/
+	resetNearby() <- true |
+	{[
+		if B( nearby(X) ) then
+		{
+			ResetNearby(X);
+			resetNearby()
+		}
+	]}
+	
+	
+	/*
+		addNearbyObjects/Characters( Objects/Characters )
+		
+		Description: Recursive functions which add every item from the nearby list to the beliefbase.
+	*/	
+	addNearbyObjects( [Object|Rest] ) <- true |
+	{[
+		NearbyObject(Object);
+		
+		B( length(Rest, Length) );
+		if B(Length > 0) then
+		{
+			addNearbyObjects(Rest)
+		}
+	]}
+	
+	addNearbyCharacters( [] ) <- true |
+	{[
+		B(true)
+	]}
+	
+	addNearbyCharacters( [Character|Rest] ) <- true |
+	{[
+		NearbyCharacter(Character);
+		addNearbyCharacters(Rest)
+	]}
+	
+	
+	/*
+		setTimer(Event, TimeSeconds)
+		
+		Description: This function tells the environment to throw the Event event to this character in TimeSeconds seconds.
+	*/
+	setTimer(Event, TimeSeconds) <- true |
+	{[
+		@env( timerEvent( Event, TimeSeconds ), _ )
+	]}
+	
+	/*
+		Resetting the different scenario dependent beliefs to start a new scenario
+	*/
+	reset(beliefs) <- true |
+	{[
+		Reset(character);
+		while B( reset(character) ) do
+		{
+			DeleteBelief()
+		}
+	]}
